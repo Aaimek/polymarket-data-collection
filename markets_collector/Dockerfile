@@ -6,8 +6,9 @@ WORKDIR /app
 COPY shared /shared
 RUN pip install -e /shared
 
-COPY message_processor/requirements.txt .
+COPY markets_collector/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY message_processor .
-CMD ["python", "src/processor.py"] 
+COPY markets_collector .
+
+CMD ["python", "src/main.py"] 
