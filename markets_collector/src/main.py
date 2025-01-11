@@ -2,13 +2,13 @@ import time
 import schedule
 import logging
 from datetime import datetime
-from collector import collect_events_objects
+from collector import collect_and_push_events_objects
 
 def main():
     logging.info("Market data collector started")
     
     # Schedule the collect_market_data function to run every 5 seconds
-    schedule.every(5).seconds.do(collect_events_objects)
+    schedule.every(5).seconds.do(collect_and_push_events_objects)
     
 
     # Keep the script running

@@ -1,0 +1,16 @@
+setup.py
+polymarket_shared/__init__.py
+polymarket_shared.egg-info/PKG-INFO
+polymarket_shared.egg-info/SOURCES.txt
+polymarket_shared.egg-info/dependency_links.txt
+polymarket_shared.egg-info/requires.txt
+polymarket_shared.egg-info/top_level.txt
+polymarket_shared/schemas/__init__.py
+polymarket_shared/schemas/base.py
+polymarket_shared/schemas/book_message.py
+polymarket_shared/schemas/clob_reward.py
+polymarket_shared/schemas/event.py
+polymarket_shared/schemas/market.py
+polymarket_shared/schemas/outcome.py
+polymarket_shared/schemas/price_change_message.py
+polymarket_shared/schemas/tick_size_change_message.py

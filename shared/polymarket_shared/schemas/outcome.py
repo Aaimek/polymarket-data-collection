@@ -15,7 +15,6 @@ class Outcome(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     market_id = Column(String, ForeignKey('markets.id'), nullable=False, index=True)
     name = Column(String, nullable=False)
-    outcome_price = Column(Numeric)
     clob_token_id = Column(String, nullable=False, unique=True, index=True)
     
     # Relationships

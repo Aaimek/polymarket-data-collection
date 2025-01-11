@@ -6,14 +6,14 @@ from sqlalchemy import pool
 from alembic import context
 
 # Import your Base
-from polymarket_schemas.base import Base
-from polymarket_schemas.book_message import BookMessage
-from polymarket_schemas.clob_reward import ClobReward
-from polymarket_schemas.event import Event
-from polymarket_schemas.market import Market
-from polymarket_schemas.outcome import Outcome
-from polymarket_schemas.price_change_message import PriceChangeMessage
-from polymarket_schemas.tick_size_change_message import TickSizeChangeMessage
+from polymarket_shared.schemas.base import Base
+from polymarket_shared.schemas.book_message import BookMessage
+from polymarket_shared.schemas.clob_reward import ClobReward
+from polymarket_shared.schemas.event import Event
+from polymarket_shared.schemas.market import Market
+from polymarket_shared.schemas.outcome import Outcome
+from polymarket_shared.schemas.price_change_message import PriceChangeMessage
+from polymarket_shared.schemas.tick_size_change_message import TickSizeChangeMessage
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

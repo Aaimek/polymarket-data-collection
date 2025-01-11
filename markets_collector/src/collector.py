@@ -2,10 +2,52 @@ import requests
 import json
 import logging
 
-from polymarket_schemas.event import Event
-from polymarket_schemas.market import Market
-from polymarket_schemas.outcome import Outcome
-from polymarket_schemas.clob_reward import ClobReward
+from polymarket_shared.schemas import Event, Market, Outcome, ClobReward
+
+from polymarket_shared.database_conn.database_conn import DatabaseManager
+
+def collect_and_push_events_objects():
+    events, markets, outcomes, clob_rewards = collect_events_objects()
+    push_events_objects(events, markets, outcomes, clob_rewards)
+
+def push_events_objects(events, markets, outcomes, clob_rewards):
+    for collection, name in [
+        (events, "events"),
+        (markets, "markets"),
+        (outcomes, "outcomes"),
+        (clob_rewards, "clob rewards")
+    ]:
+        if not collection:
+            logging.info(f"No {name} to add")
+            continue
+            
+        logging.info(f"Attempting to add {len(collection)} {name} objects")
+        
+        with DatabaseManager.session_scope() as session:
+            for obj in collection:
+                try:
+                    if name == "outcomes":
+                        # For outcomes, we need to handle the upsert manually
+                        existing = session.query(Outcome).filter_by(
+                            clob_token_id=obj.clob_token_id
+                        ).first()
+                        if existing:
+                            # Update existing record
+                            existing.market_id = obj.market_id
+                            existing.name = obj.name
+                            existing.outcome_price = obj.outcome_price
+                        else:
+                            # Insert new record
+                            session.add(obj)
+                    else:
+                        # For other tables, merge works fine
+                        session.merge(obj)
+                except Exception as e:
+                    logging.debug(f"Error processing {name} object: {str(e)}")
+                    raise
+
+            session.flush()
+            logging.info(f"Finished processing {name} objects")
 
 def collect_events_objects():
     logging.info("Collecting events objects")
@@ -44,7 +86,7 @@ def pre_process_events_data(events_data):
 
             # Process all the outcomes in the market
             # NOTE: There is no for loop becore the outcomes are not specied as a list in the API response
-            market_outcomes = preprocess_outcome(market, event_id)
+            market_outcomes = preprocess_outcome(market, market_id)
             outcomes += market_outcomes
 
             # Process the all the clob rewards in the market
