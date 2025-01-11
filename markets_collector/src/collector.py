@@ -6,48 +6,49 @@ from polymarket_shared.schemas import Event, Market, Outcome, ClobReward
 
 from polymarket_shared.database_conn.database_conn import DatabaseManager
 
+from sqlalchemy.exc import SQLAlchemyError
+
 def collect_and_push_events_objects():
-    events, markets, outcomes, clob_rewards = collect_events_objects()
-    push_events_objects(events, markets, outcomes, clob_rewards)
+    try:
+        events, markets, outcomes, clob_rewards = collect_events_objects()
+        push_events_objects(events, markets, outcomes, clob_rewards)
+    except Exception as e:
+        logging.error(f"Failed in collect_and_push_events_objects: {str(e)}", exc_info=True)
+        raise
 
 def push_events_objects(events, markets, outcomes, clob_rewards):
-    for collection, name in [
-        (events, "events"),
-        (markets, "markets"),
-        (outcomes, "outcomes"),
-        (clob_rewards, "clob rewards")
-    ]:
-        if not collection:
-            logging.info(f"No {name} to add")
-            continue
-            
-        logging.info(f"Attempting to add {len(collection)} {name} objects")
-        
-        with DatabaseManager.session_scope() as session:
-            for obj in collection:
-                try:
-                    if name == "outcomes":
-                        # For outcomes, we need to handle the upsert manually
-                        existing = session.query(Outcome).filter_by(
-                            clob_token_id=obj.clob_token_id
-                        ).first()
-                        if existing:
-                            # Update existing record
-                            existing.market_id = obj.market_id
-                            existing.name = obj.name
-                            existing.outcome_price = obj.outcome_price
-                        else:
-                            # Insert new record
-                            session.add(obj)
-                    else:
-                        # For other tables, merge works fine
-                        session.merge(obj)
-                except Exception as e:
-                    logging.debug(f"Error processing {name} object: {str(e)}")
-                    raise
+    logging.info("Starting to push objects to database")
+    db = DatabaseManager()
 
-            session.flush()
-            logging.info(f"Finished processing {name} objects")
+    try:
+        # Push events first since markets depend on them
+        logging.info(f"Pushing {len(events)} events")
+        with db.session_scope() as session:
+            for event in events:
+                session.merge(event)
+
+        # Push markets second since outcomes and clob_rewards depend on them
+        logging.info(f"Pushing {len(markets)} markets")
+        with db.session_scope() as session:
+            for market in markets:
+                session.merge(market)
+
+        # Push outcomes third
+        logging.info(f"Pushing {len(outcomes)} outcomes")
+        with db.session_scope() as session:
+            for outcome in outcomes:
+                session.merge(outcome)
+
+        # Push clob rewards last
+        logging.info(f"Pushing {len(clob_rewards)} clob rewards")
+        with db.session_scope() as session:
+            for reward in clob_rewards:
+                session.merge(reward)
+
+        logging.info("Finished pushing all objects to database")
+    except SQLAlchemyError as e:
+        logging.error(f"Database error occurred: {str(e)}")
+        raise
 
 def collect_events_objects():
     logging.info("Collecting events objects")
@@ -59,10 +60,16 @@ def collect_events_objects():
     return events, markets, outcomes, clob_rewards
 
 def get_events_data():
-    r = requests.get("https://gamma-api.polymarket.com/events?limit=1&closed=false")
-    response = r.json()
-
-    return response
+    try:
+        r = requests.get("https://gamma-api.polymarket.com/events?limit=10000&closed=false")
+        r.raise_for_status()  # Raises an HTTPError for bad responses
+        return r.json()
+    except requests.RequestException as e:
+        logging.error(f"Failed to fetch events data: {str(e)}")
+        raise
+    except json.JSONDecodeError as e:
+        logging.error(f"Failed to parse JSON response: {str(e)}")
+        raise
 
 def pre_process_events_data(events_data):
     events_list = []
@@ -71,28 +78,57 @@ def pre_process_events_data(events_data):
     clob_rewards_list = []
     
     for event in events_data:
+        try:
+            event_id = event['id']
+            
+            # Process the event
+            try:
+                event_object = preprocess_event(event)
+                events_list.append(event_object)
+            except KeyError as e:
+                logging.error(f"Missing key while processing event {event_id}: {str(e)}")
+                continue
+            except Exception as e:
+                logging.error(f"Error processing event {event_id}: {str(e)}")
+                continue
 
-        # Process the event
-        event_id = event['id']
-        event_object = preprocess_event(event)
-        events_list.append(event_object)
+            # Process markets for this event
+            for market in event['markets']:
+                try:
+                    market_id = market['id']
+                    market_object = preprocess_market(market, event_id)
+                    markets_list.append(market_object)
 
-        for market in event['markets']:
-            market_id = market['id']
+                    # Process outcomes
+                    try:
+                        market_outcomes = preprocess_outcome(market, market_id)
+                        outcomes.extend(market_outcomes)
+                    except Exception as e:
+                        logging.error(f"Error processing outcomes for market {market_id}: {str(e)}")
+                        continue
 
-            # Process the market
-            market_object = preprocess_market(market, event_id)
-            markets_list.append(market_object)
+                    # Process clob rewards
+                    for reward in market.get('clobRewards', []):
+                        try:
+                            clob_reward_object = preprocess_clob_reward(reward, market_id)
+                            clob_rewards_list.append(clob_reward_object)
+                        except Exception as e:
+                            logging.error(f"Error processing clob reward for market {market_id}: {str(e)}")
+                            continue
 
-            # Process all the outcomes in the market
-            # NOTE: There is no for loop becore the outcomes are not specied as a list in the API response
-            market_outcomes = preprocess_outcome(market, market_id)
-            outcomes += market_outcomes
+                except KeyError as e:
+                    logging.error(f"Missing key while processing market in event {event_id}: {str(e)}")
+                    continue
+                except Exception as e:
+                    logging.error(f"Error processing market in event {event_id}: {str(e)}")
+                    continue
 
-            # Process the all the clob rewards in the market
-            for reward in market['clobRewards']:
-                clob_reward_object = preprocess_clob_reward(reward, market_id)
-                clob_rewards_list.append(clob_reward_object)
+        except Exception as e:
+            logging.error(f"Error processing event data: {str(e)}")
+            continue
+
+    if not any([events_list, markets_list, outcomes, clob_rewards_list]):
+        raise ValueError("No data was successfully processed")
 
     return events_list, markets_list, outcomes, clob_rewards_list
 
@@ -186,16 +222,14 @@ def preprocess_market(market, event_id):
 
 def preprocess_outcome(market, market_id):
     outcomes_names = json.loads(market['outcomes'])
-    outcomes_prices = json.loads(market['outcomePrices'])
     outcomes_clob_token_ids = json.loads(market['clobTokenIds'])
 
     outcomes_results_dicts = []
 
-    if len(outcomes_names) == len(outcomes_prices) == len(outcomes_clob_token_ids):
+    if len(outcomes_names) == len(outcomes_clob_token_ids):
         for i in range(len(outcomes_names)):
             outcome_object = Outcome(
                 name=outcomes_names[i],
-                outcome_price=outcomes_prices[i],
                 clob_token_id=outcomes_clob_token_ids[i],
                 market_id=market_id
             )

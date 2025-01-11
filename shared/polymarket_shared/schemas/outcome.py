@@ -12,10 +12,9 @@ from .base import Base
 class Outcome(Base):
     __tablename__ = 'outcomes'
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    clob_token_id = Column(String, primary_key=True, nullable=False, index=True)
     market_id = Column(String, ForeignKey('markets.id'), nullable=False, index=True)
     name = Column(String, nullable=False)
-    clob_token_id = Column(String, nullable=False, unique=True, index=True)
     
     # Relationships
     market = relationship('Market', back_populates='outcomes')
