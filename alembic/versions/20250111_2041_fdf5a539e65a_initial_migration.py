@@ -1,8 +1,8 @@
 """Initial migration
 
-Revision ID: 5e83d18edd40
+Revision ID: fdf5a539e65a
 Revises: 
-Create Date: 2025-01-05 14:11:08.183991+00:00
+Create Date: 2025-01-11 20:41:15.362002+00:00
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = '5e83d18edd40'
+revision = 'fdf5a539e65a'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -121,15 +121,13 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_clob_rewards_market_id'), 'clob_rewards', ['market_id'], unique=False)
     op.create_table('outcomes',
-    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('clob_token_id', sa.String(), nullable=False),
     sa.Column('market_id', sa.String(), nullable=False),
     sa.Column('name', sa.String(), nullable=False),
-    sa.Column('outcome_price', sa.Numeric(), nullable=True),
-    sa.Column('clob_token_id', sa.String(), nullable=False),
     sa.ForeignKeyConstraint(['market_id'], ['markets.id'], ),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('clob_token_id')
     )
-    op.create_index(op.f('ix_outcomes_clob_token_id'), 'outcomes', ['clob_token_id'], unique=True)
+    op.create_index(op.f('ix_outcomes_clob_token_id'), 'outcomes', ['clob_token_id'], unique=False)
     op.create_index(op.f('ix_outcomes_market_id'), 'outcomes', ['market_id'], unique=False)
     op.create_table('book_messages',
     sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
