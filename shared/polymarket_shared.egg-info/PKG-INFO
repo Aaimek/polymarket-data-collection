@@ -1,0 +1,8 @@
+Metadata-Version: 2.2
+Name: polymarket_shared
+Version: 0.1.0
+Requires-Dist: sqlalchemy>=2.0.19
+Requires-Dist: psycopg2-binary>=2.9.9
+Requires-Dist: SQLAlchemy-Utils>=0.41.2
+Requires-Dist: python-dotenv>=1.0.1
+Dynamic: requires-dist
