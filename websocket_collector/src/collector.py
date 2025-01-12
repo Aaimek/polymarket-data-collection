@@ -2,21 +2,22 @@ import os
 import json
 import asyncio
 import redis
+import websockets
 from dotenv import load_dotenv
 import logging
 from datetime import datetime
+from typing import Dict, Set
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_dotenv()
+from polymarket_shared.database_conn.database_conn import DatabaseManager
+from polymarket_shared.schemas.outcome import Outcome
 
-class DummyCollector:
+class WebsocketCollector:
     def __init__(self):
         self.redis_host = os.getenv('REDIS_HOST', 'redis')
         self.redis_port = int(os.getenv('REDIS_PORT', 6379))
@@ -30,38 +31,96 @@ class DummyCollector:
             db=self.redis_db,
             decode_responses=True
         )
-
-    async def send_dummy_message(self):
-        """Generate and send a dummy market data message."""
-        dummy_data = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "market": "DUMMY-MARKET",
-            "price": 100.00,
-            "volume": 1000,
-            "type": "test_message"
-        }
         
-        message = json.dumps(dummy_data)
-        self.redis_client.publish(self.redis_channel, message)
-        logger.info(f"Sent dummy message: {message}")
+        self.base_ws_url = os.getenv('WS_BASE_URL', 'wss://ws-subscriptions-clob.polymarket.com/ws/market')
+        self.active_connections: Dict[str, websockets.WebSocketClientProtocol] = {}
+        self.active_tasks: Dict[str, asyncio.Task] = {}
+        self.current_clob_token_ids: Set[str] = set()
+
+    async def handle_websocket(self, clob_token_id: str):
+        """Handle individual websocket connection and messages."""
+        ws_url = f"{self.base_ws_url}{clob_token_id}"
+        
+        try:
+            async with websockets.connect(ws_url) as websocket:
+                self.active_connections[clob_token_id] = websocket
+                logger.info(f"Connected to websocket for {clob_token_id}")
+                
+                while True:
+                    message = await websocket.recv()
+                    # Process and publish to Redis
+                    await self.process_message(clob_token_id, message)
+                    
+        except Exception as e:
+            logger.error(f"Error in websocket connection for {clob_token_id}: {e}")
+        finally:
+            self.active_connections.pop(clob_token_id, None)
+
+    async def process_message(self, clob_token_id: str, message: str):
+        """Process and publish websocket message to Redis."""
+        try:
+            data = json.loads(message)
+            data['clob_token_id'] = clob_token_id
+            self.redis_client.publish(self.redis_channel, json.dumps(data))
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+
+    async def update_connections(self):
+        """Update websocket connections based on the outcomes objects inside of the database."""
+        while True:
+            try:
+                with self.database_manager.session_scope() as session:
+                    outcomes = session.query(Outcome).all()
+                    new_clob_token_ids = {outcome.clob_token_id for outcome in outcomes}
+
+                # Find connections to close
+                to_remove = self.current_clob_token_ids - new_clob_token_ids
+                # Find new connections to open
+                to_add = new_clob_token_ids - self.current_clob_token_ids
+
+                # Close obsolete connections
+                for clob_token_id in to_remove:
+                    if clob_token_id in self.active_tasks:
+                        self.active_tasks[clob_token_id].cancel()
+                        await self.active_tasks[clob_token_id]
+                        del self.active_tasks[clob_token_id]
+                        logger.info(f"Closed connection for {clob_token_id}")
+
+                # Start new connections
+                for clob_token_id in to_add:
+                    task = asyncio.create_task(self.handle_websocket(clob_token_id))
+                    self.active_tasks[clob_token_id] = task
+                    logger.info(f"Started new connection for {clob_token_id}")
+
+                self.current_clob_token_ids = new_clob_token_ids
+
+            except Exception as e:
+                logger.error(f"Error updating connections: {e}")
+
+            await asyncio.sleep(0.1)  # Check for updates every minute
 
     async def start(self):
-        """Start the dummy collector."""
+        """Start the websocket collector."""
         try:
-            logger.info("Starting dummy collector...")
-            while True:
-                await self.send_dummy_message()
-                await asyncio.sleep(5)  # Send a message every 5 seconds
-                
+            logger.info("Starting websocket collector...")
+            update_task = asyncio.create_task(self.update_connections())
+            await update_task
         except Exception as e:
-            logger.error(f"Error in dummy collector: {e}")
+            logger.error(f"Error in websocket collector: {e}")
             raise
         finally:
+            # Close all active connections
+            for task in self.active_tasks.values():
+                task.cancel()
+            await asyncio.gather(*self.active_tasks.values(), return_exceptions=True)
             self.redis_client.close()
 
 async def main():
-    collector = DummyCollector()
+    collector = WebsocketCollector()
+    # Initialize database manager
+    collector.database_manager = DatabaseManager()
+    collector.database_manager.initialize()
     await collector.start()
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())
