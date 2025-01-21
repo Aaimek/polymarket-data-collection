@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import logging
 from datetime import datetime
 from typing import Dict, Set
+from websocket_client import PolymarketWebsocketClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,45 +33,50 @@ class WebsocketCollector:
             decode_responses=True
         )
         
-        self.base_ws_url = os.getenv('WS_BASE_URL', 'wss://ws-subscriptions-clob.polymarket.com/ws/market')
+        self.base_ws_url = 'wss://ws-subscriptions-clob.polymarket.com/ws/market'
         self.active_connections: Dict[str, websockets.WebSocketClientProtocol] = {}
         self.active_tasks: Dict[str, asyncio.Task] = {}
         self.current_clob_token_ids: Set[str] = set()
 
     async def handle_websocket(self, clob_token_id: str):
         """Handle individual websocket connection and messages."""
-        ws_url = f"{self.base_ws_url}{clob_token_id}"
-        
         try:
-            async with websockets.connect(ws_url) as websocket:
-                self.active_connections[clob_token_id] = websocket
-                logger.info(f"Connected to websocket for {clob_token_id}")
+            client = PolymarketWebsocketClient(clob_token_id, self.base_ws_url)
+            websocket = await client.connect()
+            self.active_connections[clob_token_id] = client
+            
+            logger.info(f"Connected to websocket for {clob_token_id}")
+            
+            while True:
+                message = await websocket.recv()
+                # Parse the message as JSON to get the list
+                message_list = json.loads(message)
+                # Process each message in the list
+                await asyncio.gather(*[self.process_message(msg) for msg in message_list])
                 
-                while True:
-                    message = await websocket.recv()
-                    # Process and publish to Redis
-                    await self.process_message(clob_token_id, message)
-                    
         except Exception as e:
             logger.error(f"Error in websocket connection for {clob_token_id}: {e}")
         finally:
-            self.active_connections.pop(clob_token_id, None)
+            if clob_token_id in self.active_connections:
+                await self.active_connections[clob_token_id].close()
+                self.active_connections.pop(clob_token_id, None)
 
-    async def process_message(self, clob_token_id: str, message: str):
+    async def process_message(self, message: dict):
         """Process and publish websocket message to Redis."""
+
+        logger.info(f"Message data (type: {type(message)}): {message}")
+
         try:
-            data = json.loads(message)
-            data['clob_token_id'] = clob_token_id
-            self.redis_client.publish(self.redis_channel, json.dumps(data))
+            self.redis_client.publish(self.redis_channel, json.dumps(message))
         except Exception as e:
-            logger.error(f"Error processing message: {e}")
+            logger.error(f"Error in websocket collector publishing message: {e}")
 
     async def update_connections(self):
         """Update websocket connections based on the outcomes objects inside of the database."""
         while True:
             try:
                 with self.database_manager.session_scope() as session:
-                    outcomes = session.query(Outcome).all()
+                    outcomes = [session.query(Outcome).first()]
                     new_clob_token_ids = {outcome.clob_token_id for outcome in outcomes}
 
                 # Find connections to close
@@ -104,12 +110,15 @@ class WebsocketCollector:
         try:
             logger.info("Starting websocket collector...")
             update_task = asyncio.create_task(self.update_connections())
-            await update_task
+            # Keep the service running
+            await asyncio.gather(update_task)
         except Exception as e:
             logger.error(f"Error in websocket collector: {e}")
             raise
         finally:
             # Close all active connections
+            for client in self.active_connections.values():
+                await client.close()
             for task in self.active_tasks.values():
                 task.cancel()
             await asyncio.gather(*self.active_tasks.values(), return_exceptions=True)
