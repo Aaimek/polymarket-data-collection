@@ -51,7 +51,7 @@ class PolymarketWebsocketClient:
         """Send ping every 10 seconds to keep connection alive."""
         try:
             while True:
-                if self.websocket and not self.websocket.closed:
+                if self.websocket: #and not self.websocket.closed:
                     await self.websocket.ping()
                     logger.debug(f"Ping sent for {self.clob_token_id}")
                 await asyncio.sleep(10)

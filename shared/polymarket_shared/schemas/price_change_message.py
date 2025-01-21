@@ -13,8 +13,8 @@ class PriceChangeMessage(Base):
     __tablename__ = 'price_change_messages'
     
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    clob_token_id = Column(String, ForeignKey('outcomes.clob_token_id'), nullable=False, index=True)
-    asset_id = Column(String, nullable=False)
+    # clob_token_id = Column(String, ForeignKey('outcomes.clob_token_id'), nullable=False, index=True)
+    asset_id = Column(String, ForeignKey('outcomes.clob_token_id'), nullable=False, index=True)
     market = Column(String, nullable=False, index=True)
     price = Column(Numeric, nullable=False)
     size = Column(Numeric, nullable=False)

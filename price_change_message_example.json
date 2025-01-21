@@ -1,0 +1,14 @@
+{
+    "asset_id": "54774190602932495681624596813895280541057113822779394733336244613748178149294",
+    "changes": [
+        {
+            "price": "0.644",
+            "side": "BUY",
+            "size": "0"
+        }
+    ],
+    "event_type": "price_change",
+    "hash": "d7186e8abc4ed70e41e6cb6abf65b4c20150dfe3",
+    "market": "0xd987b38ecf3bdf4cb69734004c51238875411e0924dd0e9b30e3b31e623c4f00",
+    "timestamp": "1737487191055"
+}

@@ -49,8 +49,10 @@ class WebsocketCollector:
             
             while True:
                 message = await websocket.recv()
-                # Process and publish to Redis
-                await self.process_message(clob_token_id, message)
+                # Parse the message as JSON to get the list
+                message_list = json.loads(message)
+                # Process each message in the list
+                await asyncio.gather(*[self.process_message(msg) for msg in message_list])
                 
         except Exception as e:
             logger.error(f"Error in websocket connection for {clob_token_id}: {e}")
@@ -59,14 +61,15 @@ class WebsocketCollector:
                 await self.active_connections[clob_token_id].close()
                 self.active_connections.pop(clob_token_id, None)
 
-    async def process_message(self, clob_token_id: str, message: str):
+    async def process_message(self, message: dict):
         """Process and publish websocket message to Redis."""
+
+        logger.info(f"Message data (type: {type(message)}): {message}")
+
         try:
-            data = json.loads(message)
-            data['clob_token_id'] = clob_token_id
-            self.redis_client.publish(self.redis_channel, json.dumps(data))
+            self.redis_client.publish(self.redis_channel, json.dumps(message))
         except Exception as e:
-            logger.error(f"Error processing message: {e}")
+            logger.error(f"Error in websocket collector publishing message: {e}")
 
     async def update_connections(self):
         """Update websocket connections based on the outcomes objects inside of the database."""
