@@ -18,8 +18,8 @@ class BookMessage(Base):
     market = Column(String, nullable=False, index=True)
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False, index=True)
     hash = Column(String)
-    buys = Column(JSONB)
-    sells = Column(JSONB)
+    bids = Column(JSONB)
+    asks = Column(JSONB)
     
     # Relationships
     outcome = relationship('Outcome', back_populates='book_messages')
