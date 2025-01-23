@@ -4,8 +4,9 @@ from sqlalchemy import (
     String,
     Numeric,
     TIMESTAMP,
-    ForeignKey
+    ForeignKey,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from .base import Base
 from sqlalchemy.orm import relationship
 
@@ -16,9 +17,7 @@ class PriceChangeMessage(Base):
     # clob_token_id = Column(String, ForeignKey('outcomes.clob_token_id'), nullable=False, index=True)
     asset_id = Column(String, ForeignKey('outcomes.clob_token_id'), nullable=False, index=True)
     market = Column(String, nullable=False, index=True)
-    price = Column(Numeric, nullable=False)
-    size = Column(Numeric, nullable=False)
-    side = Column(String, nullable=False)
+    changes = Column(JSONB)
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False, index=True)
     hash = Column(String)
     
