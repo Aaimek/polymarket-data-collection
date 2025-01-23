@@ -4,6 +4,7 @@ import asyncio
 import redis
 from dotenv import load_dotenv
 import logging
+import datetime
 
 from polymarket_shared.database_conn.database_conn import DatabaseManager
 
@@ -45,21 +46,38 @@ class MessageProcessor:
                 data = json.loads(message['data'])
                 logger.info(f"Processing message: {data}")
 
+                event_type = data['event_type']
+
+                # Strip the event_type from the data in order to make it fit 1:1 to the db schema
+                data.pop('event_type', None)
+
+                # Timestmap recieved is in ms (milliseconds), but postgres expects it in s (seconds) (UNIX standard)
+                try:
+                    data['timestamp'] = int(data['timestamp']) / 1000
+                    data['timestamp'] = datetime.datetime.fromtimestamp(data['timestamp'], datetime.UTC)
+                except Exception as e:
+                    logger.error(f"Error parsing timestamp: {e}")
+                    return
+
                 # Step 1: Make the message into a sqlalchemy model
-                match data['event_type']:
-                    case 'book':
-                        message = BookMessage(**data)
-                    case 'price_change':
-                        message = PriceChangeMessage(**data)
-                    case 'tick_size_change':
-                        message = TickSizeChangeMessage(**data)
-                    case _:
-                        logger.warning(f"Unknown event type: {data['event_type']}")
-                        return
+                try:
+                    match event_type:
+                        case 'book':
+                            parsed_message = BookMessage(**data)
+                        case 'price_change':
+                            parsed_message = PriceChangeMessage(**data)
+                        case 'tick_size_change':
+                            parsed_message = TickSizeChangeMessage(**data)
+                        case _:
+                            logger.warning(f"Unknown event type: {event_type}")
+                            return
+                except Exception as e:
+                    logger.error(f"Error parsing message data: {e}")
+                    return
 
                 # Step 2: Push the message to the database
                 with self.db.session_scope() as session:
-                    session.merge(message)
+                    session.merge(parsed_message)
 
                 
         except Exception as e:

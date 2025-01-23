@@ -76,7 +76,7 @@ class WebsocketCollector:
         while True:
             try:
                 with self.database_manager.session_scope() as session:
-                    outcomes = [session.query(Outcome).first()]
+                    outcomes = session.query(Outcome).order_by(Outcome.name.asc()).limit(100).all()
                     new_clob_token_ids = {outcome.clob_token_id for outcome in outcomes}
 
                 # Find connections to close
