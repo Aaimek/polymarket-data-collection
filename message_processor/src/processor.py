@@ -5,6 +5,11 @@ import redis
 from dotenv import load_dotenv
 import logging
 
+from polymarket_shared.database_conn.database_conn import DatabaseManager
+
+from polymarket_shared.schemas import BookMessage, PriceChangeMessage, TickSizeChangeMessage
+
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -31,14 +36,31 @@ class MessageProcessor:
         )
         self.pubsub = self.redis_client.pubsub()
 
+        self.db = DatabaseManager()
+
     async def process_message(self, message):
         """Process incoming messages."""
         try:
             if message['type'] == 'message':
                 data = json.loads(message['data'])
                 logger.info(f"Processing message: {data}")
-                # Add your message processing logic here
-                # For example, storing in TimescaleDB, aggregating data, etc.
+
+                # Step 1: Make the message into a sqlalchemy model
+                match data['event_type']:
+                    case 'book':
+                        message = BookMessage(**data)
+                    case 'price_change':
+                        message = PriceChangeMessage(**data)
+                    case 'tick_size_change':
+                        message = TickSizeChangeMessage(**data)
+                    case _:
+                        logger.warning(f"Unknown event type: {data['event_type']}")
+                        return
+
+                # Step 2: Push the message to the database
+                with self.db.session_scope() as session:
+                    session.merge(message)
+
                 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
