@@ -73,10 +73,12 @@ class WebsocketCollector:
 
     async def update_connections(self):
         """Update websocket connections based on the outcomes objects inside of the database."""
+        BATCH_SIZE = 10
+        BATCH_DELAY = 5
         while True:
             try:
                 with self.database_manager.session_scope() as session:
-                    outcomes = session.query(Outcome).order_by(Outcome.name.asc()).limit(100).all()
+                    outcomes = session.query(Outcome).order_by(Outcome.name.asc()).all()
                     new_clob_token_ids = {outcome.clob_token_id for outcome in outcomes}
 
                 # Find connections to close
@@ -92,11 +94,19 @@ class WebsocketCollector:
                         del self.active_tasks[clob_token_id]
                         logger.info(f"Closed connection for {clob_token_id}")
 
-                # Start new connections
-                for clob_token_id in to_add:
-                    task = asyncio.create_task(self.handle_websocket(clob_token_id))
-                    self.active_tasks[clob_token_id] = task
-                    logger.info(f"Started new connection for {clob_token_id}")
+                # Start new connections, in batches
+                to_add_list = list(to_add)
+                for i in range(0, len(to_add_list), BATCH_SIZE):
+                    batch = to_add_list[i:i+BATCH_SIZE]
+                    logger.info(f"Starting {len(batch)} new connections")
+                    for clob_token_id in batch:
+                        task = asyncio.create_task(self.handle_websocket(clob_token_id))
+                        self.active_tasks[clob_token_id] = task
+                        logger.info(f"Started new connection for {clob_token_id}")
+                    
+                    if i + BATCH_SIZE < len(to_add_list):
+                        logger.info(f"Waiting for {BATCH_DELAY} seconds before starting next batch")
+                        await asyncio.sleep(BATCH_DELAY)
 
                 self.current_clob_token_ids = new_clob_token_ids
 
