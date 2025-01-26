@@ -8,14 +8,14 @@ import logging
 from datetime import datetime
 from typing import Dict, Set
 from websocket_client import PolymarketWebsocketClient
-from models.connection_status import ConnectionStatus
+from models.connection_status import ConnectionState, WebSocketStatus
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 from polymarket_shared.database_conn.database_conn import DatabaseManager
 from polymarket_shared.schemas.outcome import Outcome
@@ -41,9 +41,9 @@ class WebsocketCollector:
         self.current_clob_token_ids: Set[str] = set()
 
         # Tracking of the connection status for all of the orderbooks
-        self.connection_statuses: Dict[str, ConnectionStatus] = {}
+        self.connection_statuses: Dict[str, WebSocketStatus] = {}
 
-    def get_connection_status(self) -> Dict[str, ConnectionStatus]:
+    def get_connection_status(self) -> Dict[str, ConnectionState]:
         """
         Return the connection status for all of the orderbooks.
         """
@@ -53,10 +53,10 @@ class WebsocketCollector:
         """Display the connection status for all of the orderbooks."""
 
         while True:
-            number_of_closed_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionStatus.DISCONNECTED)
-            number_of_failed_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionStatus.FAILED)
-            number_of_connecting_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionStatus.CONNECTING)
-            number_of_connected_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionStatus.CONNECTED)
+            number_of_closed_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionState.DISCONNECTED)
+            number_of_failed_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionState.FAILED)
+            number_of_connecting_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionState.CONNECTING)
+            number_of_connected_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionState.CONNECTED)
 
             logger.info(f"Number of closed connections: {number_of_closed_connections}")
             logger.info(f"Number of failed connections: {number_of_failed_connections}")
@@ -67,19 +67,18 @@ class WebsocketCollector:
 
     async def handle_websocket(self, clob_token_id: str):
         """Handle individual websocket connection and messages."""
-        status = ConnectionStatus(status=ConnectionStatus.CONNECTING)
+
+        status = WebSocketStatus(status=ConnectionState.CONNECTING)
         self.connection_statuses[clob_token_id] = status
-        
-        logger.debug(f"Handling websocket for {clob_token_id}...")
 
         try:
-            logger.info(f"Connecting to websocket for {clob_token_id}...")
+            logger.debug(f"Connecting to websocket for {clob_token_id}...")
             client = PolymarketWebsocketClient(clob_token_id, self.base_ws_url)
             websocket = await client.connect()
-            status.state = ConnectionStatus.CONNECTED
+            status.state = ConnectionState.CONNECTED
             status.connected_since = datetime.now()
             self.active_connections[clob_token_id] = client
-            logger.info(f"Connected to websocket for {clob_token_id}")
+            logger.debug(f"Connected to websocket for {clob_token_id}")
             
             while True:
                 message = await websocket.recv()
@@ -92,7 +91,7 @@ class WebsocketCollector:
                 
         except Exception as e:
             # Update the connection status
-            status.state = ConnectionStatus.FAILED
+            status.state = ConnectionState.FAILED
             status.last_error = str(e)
             status.reconnect_attempts += 1
             logger.error(f"Error in websocket connection for {clob_token_id}: {e}")
@@ -102,7 +101,7 @@ class WebsocketCollector:
                 self.active_connections.pop(clob_token_id, None)
             
             # Update the connection status
-            status.state = ConnectionStatus.DISCONNECTED
+            status.state = ConnectionState.DISCONNECTED
 
     async def process_message(self, message: dict):
         """Process and publish websocket message to Redis."""
@@ -165,9 +164,9 @@ class WebsocketCollector:
         try:
             logger.info("Starting websocket collector...")
             update_task = asyncio.create_task(self.update_connections())
-            # display_status_task = asyncio.create_task(self.display_connection_status())
+            display_status_task = asyncio.create_task(self.display_connection_status())
             # Keep the service running
-            await asyncio.gather(update_task)
+            await asyncio.gather(update_task, display_status_task)
         except Exception as e:
             logger.error(f"Error in websocket collector: {e}")
             raise

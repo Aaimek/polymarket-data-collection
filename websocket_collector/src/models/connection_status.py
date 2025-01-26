@@ -9,16 +9,16 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-class ConnectionStatus(Enum):
+class ConnectionState(Enum):
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
     FAILED = "failed"
     CONNECTING = "connecting"
 
 @dataclass
-class ConnectionStatus:
+class WebSocketStatus:
     # clob_token_id: str
-    status: ConnectionStatus
+    status: ConnectionState
     connected_since: Optional[datetime] = None
     last_error: Optional[str] = None
     reconnect_attempts: int = 0
