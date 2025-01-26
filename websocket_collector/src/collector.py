@@ -8,12 +8,14 @@ import logging
 from datetime import datetime
 from typing import Dict, Set
 from websocket_client import PolymarketWebsocketClient
+from models.connection_status import ConnectionStatus
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 from polymarket_shared.database_conn.database_conn import DatabaseManager
 from polymarket_shared.schemas.outcome import Outcome
@@ -38,33 +40,74 @@ class WebsocketCollector:
         self.active_tasks: Dict[str, asyncio.Task] = {}
         self.current_clob_token_ids: Set[str] = set()
 
+        # Tracking of the connection status for all of the orderbooks
+        self.connection_statuses: Dict[str, ConnectionStatus] = {}
+
+    def get_connection_status(self) -> Dict[str, ConnectionStatus]:
+        """
+        Return the connection status for all of the orderbooks.
+        """
+        return {clob_token_id: status for clob_token_id, status in self.connection_statuses.items()}
+
+    async def display_connection_status(self) -> None:
+        """Display the connection status for all of the orderbooks."""
+
+        while True:
+            number_of_closed_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionStatus.DISCONNECTED)
+            number_of_failed_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionStatus.FAILED)
+            number_of_connecting_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionStatus.CONNECTING)
+            number_of_connected_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionStatus.CONNECTED)
+
+            logger.info(f"Number of closed connections: {number_of_closed_connections}")
+            logger.info(f"Number of failed connections: {number_of_failed_connections}")
+            logger.info(f"Number of connecting connections: {number_of_connecting_connections}")
+            logger.info(f"Number of connected connections: {number_of_connected_connections}")
+
+            await asyncio.sleep(5)
+
     async def handle_websocket(self, clob_token_id: str):
         """Handle individual websocket connection and messages."""
+        status = ConnectionStatus(status=ConnectionStatus.CONNECTING)
+        self.connection_statuses[clob_token_id] = status
+        
+        logger.debug(f"Handling websocket for {clob_token_id}...")
+
         try:
+            logger.info(f"Connecting to websocket for {clob_token_id}...")
             client = PolymarketWebsocketClient(clob_token_id, self.base_ws_url)
             websocket = await client.connect()
+            status.state = ConnectionStatus.CONNECTED
+            status.connected_since = datetime.now()
             self.active_connections[clob_token_id] = client
-            
             logger.info(f"Connected to websocket for {clob_token_id}")
             
             while True:
                 message = await websocket.recv()
+                # Update the connection status
+                self.connection_statuses[clob_token_id].last_message_received = datetime.now()
                 # Parse the message as JSON to get the list
                 message_list = json.loads(message)
                 # Process each message in the list
                 await asyncio.gather(*[self.process_message(msg) for msg in message_list])
                 
         except Exception as e:
+            # Update the connection status
+            status.state = ConnectionStatus.FAILED
+            status.last_error = str(e)
+            status.reconnect_attempts += 1
             logger.error(f"Error in websocket connection for {clob_token_id}: {e}")
         finally:
             if clob_token_id in self.active_connections:
                 await self.active_connections[clob_token_id].close()
                 self.active_connections.pop(clob_token_id, None)
+            
+            # Update the connection status
+            status.state = ConnectionStatus.DISCONNECTED
 
     async def process_message(self, message: dict):
         """Process and publish websocket message to Redis."""
 
-        logger.info(f"Message data (type: {type(message)}): {message}")
+        logger.debug(f"Message data (type: {type(message)}): {message}")
 
         try:
             self.redis_client.publish(self.redis_channel, json.dumps(message))
@@ -92,6 +135,8 @@ class WebsocketCollector:
                         self.active_tasks[clob_token_id].cancel()
                         await self.active_tasks[clob_token_id]
                         del self.active_tasks[clob_token_id]
+                        # If the Outcome is no longder in the db, we remove the connection status rather than having it as disconnected
+                        self.connection_statuses.pop(clob_token_id, None)
                         logger.info(f"Closed connection for {clob_token_id}")
 
                 # Start new connections, in batches
@@ -102,7 +147,7 @@ class WebsocketCollector:
                     for clob_token_id in batch:
                         task = asyncio.create_task(self.handle_websocket(clob_token_id))
                         self.active_tasks[clob_token_id] = task
-                        logger.info(f"Started new connection for {clob_token_id}")
+                        logger.debug(f"Started new connection for {clob_token_id}")
                     
                     if i + BATCH_SIZE < len(to_add_list):
                         logger.info(f"Waiting for {BATCH_DELAY} seconds before starting next batch")
@@ -120,6 +165,7 @@ class WebsocketCollector:
         try:
             logger.info("Starting websocket collector...")
             update_task = asyncio.create_task(self.update_connections())
+            # display_status_task = asyncio.create_task(self.display_connection_status())
             # Keep the service running
             await asyncio.gather(update_task)
         except Exception as e:
