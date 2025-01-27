@@ -12,4 +12,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY websocket_collector .
 
-CMD ["python", "src/collector.py"] 
+CMD ["python", "src/main.py"] 
