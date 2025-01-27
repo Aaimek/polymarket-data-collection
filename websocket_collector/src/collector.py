@@ -5,11 +5,12 @@ import redis
 import websockets
 from dotenv import load_dotenv
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Set
 from websocket_client import PolymarketWebsocketClient
 from models.connection_status import ConnectionState, WebSocketStatus
-
+from models.buffer_messages_element import BufferMessageElement
+from collections import deque
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -19,6 +20,10 @@ logger.setLevel(logging.INFO)
 
 from polymarket_shared.database_conn.database_conn import DatabaseManager
 from polymarket_shared.schemas.outcome import Outcome
+
+BUFFER_PERIOD_SECONDS = 60
+BATCH_SIZE = 15
+BATCH_DELAY = 5
 
 class WebsocketCollector:
     def __init__(self):
@@ -43,39 +48,39 @@ class WebsocketCollector:
         # Tracking of the connection status for all of the orderbooks
         self.connection_statuses: Dict[str, WebSocketStatus] = {}
 
-    def get_connection_status(self) -> Dict[str, ConnectionState]:
-        """
-        Return the connection status for all of the orderbooks.
-        """
-        return {clob_token_id: status for clob_token_id, status in self.connection_statuses.items()}
+        # Buffer of messages to be sent to the database - will safe BUFFER_PERIOD_SECONDS seconds of messages
+        self.messages_buffer = deque()
+        self.buffer_duration = timedelta(seconds=BUFFER_PERIOD_SECONDS)
 
-    async def display_connection_status(self) -> None:
-        """Display the connection status for all of the orderbooks."""
+    def add_message_to_buffer(self, message: dict):
+        """Add a message to the buffer."""
+        self.messages_buffer.append(message)
 
+    async def flush_buffer(self):
+        """Flush the buffer to the database."""
         while True:
-            number_of_closed_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionState.DISCONNECTED)
-            number_of_failed_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionState.FAILED)
-            number_of_connecting_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionState.CONNECTING)
-            number_of_connected_connections = sum(1 for status in self.connection_statuses.values() if status.state == ConnectionState.CONNECTED)
+            logging.info(f"Flushing buffer of size {len(self.messages_buffer)}")
+            if len(self.messages_buffer) > 0:
+                earliest_message_date = self.messages_buffer[0].timestamp
+                while self.messages_buffer and datetime.now() - earliest_message_date > self.buffer_duration:
+                    self.messages_buffer.popleft()
+                    earliest_message_date = self.messages_buffer[0].timestamp
 
-            logger.info(f"Number of closed connections: {number_of_closed_connections}")
-            logger.info(f"Number of failed connections: {number_of_failed_connections}")
-            logger.info(f"Number of connecting connections: {number_of_connecting_connections}")
-            logger.info(f"Number of connected connections: {number_of_connected_connections}")
-
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
 
     async def handle_websocket(self, clob_token_id: str):
         """Handle individual websocket connection and messages."""
 
-        status = WebSocketStatus(status=ConnectionState.CONNECTING)
-        self.connection_statuses[clob_token_id] = status
+        # status = WebSocketStatus(status=ConnectionState.CONNECTING)
+        # self.connection_statuses[clob_token_id] = status
+
+        status = self.connection_statuses[clob_token_id]
 
         try:
             logger.debug(f"Connecting to websocket for {clob_token_id}...")
             client = PolymarketWebsocketClient(clob_token_id, self.base_ws_url)
             websocket = await client.connect()
-            status.state = ConnectionState.CONNECTED
+            status.status = ConnectionState.CONNECTED
             status.connected_since = datetime.now()
             self.active_connections[clob_token_id] = client
             logger.debug(f"Connected to websocket for {clob_token_id}")
@@ -91,7 +96,7 @@ class WebsocketCollector:
                 
         except Exception as e:
             # Update the connection status
-            status.state = ConnectionState.FAILED
+            status.status = ConnectionState.FAILED
             status.last_error = str(e)
             status.reconnect_attempts += 1
             logger.error(f"Error in websocket connection for {clob_token_id}: {e}")
@@ -101,13 +106,17 @@ class WebsocketCollector:
                 self.active_connections.pop(clob_token_id, None)
             
             # Update the connection status
-            status.state = ConnectionState.DISCONNECTED
+            status.status = ConnectionState.DISCONNECTED
 
     async def process_message(self, message: dict):
         """Process and publish websocket message to Redis."""
 
         logger.debug(f"Message data (type: {type(message)}): {message}")
 
+        # Add the message to the buffer
+        self.add_message_to_buffer(BufferMessageElement(datetime.now(), message))
+
+        # Most importantly, push it to redis
         try:
             self.redis_client.publish(self.redis_channel, json.dumps(message))
         except Exception as e:
@@ -115,8 +124,6 @@ class WebsocketCollector:
 
     async def update_connections(self):
         """Update websocket connections based on the outcomes objects inside of the database."""
-        BATCH_SIZE = 10
-        BATCH_DELAY = 5
         while True:
             try:
                 with self.database_manager.session_scope() as session:
@@ -127,6 +134,11 @@ class WebsocketCollector:
                 to_remove = self.current_clob_token_ids - new_clob_token_ids
                 # Find new connections to open
                 to_add = new_clob_token_ids - self.current_clob_token_ids
+
+                # Mark the new clob_token_ids as disconnected by default, if it's not already here
+                for clob_token_id in new_clob_token_ids:
+                    if clob_token_id not in self.connection_statuses:
+                        self.connection_statuses[clob_token_id] = WebSocketStatus(status=ConnectionState.DISCONNECTED)
 
                 # Close obsolete connections
                 for clob_token_id in to_remove:
@@ -164,9 +176,10 @@ class WebsocketCollector:
         try:
             logger.info("Starting websocket collector...")
             update_task = asyncio.create_task(self.update_connections())
-            display_status_task = asyncio.create_task(self.display_connection_status())
+            # display_status_task = asyncio.create_task(self.display_connection_status())
+            flush_buffer_task = asyncio.create_task(self.flush_buffer())
             # Keep the service running
-            await asyncio.gather(update_task, display_status_task)
+            await asyncio.gather(update_task, flush_buffer_task)
         except Exception as e:
             logger.error(f"Error in websocket collector: {e}")
             raise
@@ -178,13 +191,3 @@ class WebsocketCollector:
                 task.cancel()
             await asyncio.gather(*self.active_tasks.values(), return_exceptions=True)
             self.redis_client.close()
-
-async def main():
-    collector = WebsocketCollector()
-    # Initialize database manager
-    collector.database_manager = DatabaseManager()
-    collector.database_manager.initialize()
-    await collector.start()
-
-if __name__ == "__main__":
-    asyncio.run(main())
