@@ -10,6 +10,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+      - app_network
 
   timescaledb:
     image: timescale/timescaledb:latest-pg14
@@ -26,6 +28,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - app_network
 
   message_processor:
     build:
@@ -38,6 +42,8 @@ services:
         condition: service_healthy
       timescaledb:
         condition: service_healthy
+    networks:
+      - app_network
 
   websocket_collector:
     build:
@@ -50,6 +56,8 @@ services:
         condition: service_healthy
       timescaledb:
         condition: service_healthy
+    networks:
+      - app_network
 
   markets_collector:
     build:
@@ -60,6 +68,24 @@ services:
     depends_on:
       timescaledb:
         condition: service_healthy
+    networks:
+      - app_network
+
+  market_simulator:
+    build:
+      context: .
+      dockerfile: market_simulator/Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    networks:
+      - app_network
 
 volumes:
   timescaledb_data: 
+
+networks:
+  app_network:
+    driver: bridge
