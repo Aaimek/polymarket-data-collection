@@ -1,4 +1,4 @@
-from src.orders import Side
+from orders import Side
 from dataclasses import dataclass
 from datetime import datetime
 @dataclass
