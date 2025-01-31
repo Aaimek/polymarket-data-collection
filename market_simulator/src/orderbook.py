@@ -12,6 +12,17 @@ class OrderBookSnapshot:
     bids: SortedDict()
 
 class Orderbook:
+    """
+    This class is in charge of simulated a Polymarket orderbook
+    
+    It:
+    - Receives messages from the historical feed ('just' like the ones it would receive from the API)
+    - Builds and updates the orderbook status (L3) from those consecutive messages
+    - TODO: Receives orders from the MarketMaker,  integrate them in the L3 representation, match them, update them, send the status back to the MarketMaker etc...
+    
+
+    See the README for more details.
+    """
     def __init__(self, clock: SimulationClock):
         self.orders = []
         self.asks = SortedDict()        
