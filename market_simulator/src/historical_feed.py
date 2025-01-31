@@ -5,9 +5,9 @@ import json
 from src.orders import Side
 from datetime import datetime
 from src.orderbook import Orderbook
+
 class HistoricalFeed:
-    def __init__(self, simulation_clock: SimulationClock):
-        self.simulation_clock = simulation_clock
+    def __init__(self):
         self.price_change_messages = []
 
     def load_messages(self):
@@ -24,8 +24,9 @@ class HistoricalFeed:
                 side = Side.BUY if change['side'] == 'BUY' else Side.SELL
                 price_change_message.changes.append(PriceChange(side, change['price'], change['size']))
             self.price_change_messages.append(price_change_message)
+
     
     def replay(self, orderbook: Orderbook):
         for message in self.price_change_messages:
-            self.simulation_clock.set_time(message.timestamp)
+            orderbook.simulation_clock.set_time(message.timestamp)
             orderbook.process_message(message)
