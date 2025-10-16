@@ -1,5 +1,10 @@
 # Polymarket data collection
 
+## Context
+1st step of the project, as part of a student project inside of the Beta Sigma Club (https://www.betasigmaclub.com/)
+
+The end goal was to make some markets on Polymarket. As all good student projects, it stopped somewhat after.
+
 ## Goal
 
 Collect data from Polymarket, in a *raw* manner.
